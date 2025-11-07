@@ -9,8 +9,26 @@ import "@openzeppelin/contracts/security/Pausable.sol";
  * @title ProofStream
  * @dev Blockchain-based creative timeline and IP protection platform
  * @notice Allows creators to register timestamped milestones of their creative work
+ * @custom:security-contact security@proofstream.io
+ *
+ * SECURITY FIXES APPLIED:
+ * - Added pagination to prevent unbounded array issues
+ * - Implemented witness limit and O(1) duplicate checking
+ * - Added nonce to prevent hash collisions
+ * - Implemented excess fee refunds
+ * - Added maximum fee caps
+ * - Added events for all state changes
+ * - Added string length validation
  */
 contract ProofStream is Ownable, ReentrancyGuard, Pausable {
+
+    // ============ CONSTANTS ============
+
+    uint256 public constant MAX_REGISTRATION_FEE = 0.1 ether;
+    uint256 public constant MAX_WITNESS_FEE = 0.05 ether;
+    uint256 public constant MAX_WITNESSES_PER_MILESTONE = 50;
+    uint256 public constant MAX_STRING_LENGTH = 200;
+    uint256 public constant MAX_IPFS_HASH_LENGTH = 100;
 
     // ============ STATE VARIABLES ============
 
@@ -21,7 +39,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         string stage;               // "draft", "revision", "final", etc.
         string ipfsHash;            // Optional IPFS hash for storage
         bool isEncrypted;           // Whether content is encrypted
-        address[] witnesses;        // Optional witness addresses
+        address[] witnesses;        // Array of witness addresses
+        mapping(address => bool) hasWitnessed;  // O(1) duplicate checking
+        uint256 witnessCount;       // Track witness count
     }
 
     struct Project {
@@ -38,6 +58,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
 
     // Mapping: creator address => array of project hashes
     mapping(address => bytes32[]) public creatorProjects;
+
+    // Mapping: creator address => nonce for unique hash generation
+    mapping(address => uint256) private creatorNonce;
 
     // Mapping: content hash => registration info for quick lookup
     mapping(bytes32 => RegistrationInfo) public registrations;
@@ -85,12 +108,26 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         uint256 timestamp
     );
 
+    event WitnessAuthorized(
+        address indexed creator,
+        address indexed witness,
+        uint256 timestamp
+    );
+
+    event WitnessRevoked(
+        address indexed creator,
+        address indexed witness,
+        uint256 timestamp
+    );
+
     event ProjectVisibilityChanged(
         bytes32 indexed projectHash,
         bool isPublic
     );
 
     event FeeUpdated(uint256 newFee, string feeType);
+
+    event ExcessRefunded(address indexed recipient, uint256 amount);
 
     // ============ MODIFIERS ============
 
@@ -107,6 +144,12 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
             projects[projectHash].creator != address(0),
             "Project does not exist"
         );
+        _;
+    }
+
+    modifier validStringLength(string memory str, uint256 maxLength) {
+        require(bytes(str).length > 0, "String cannot be empty");
+        require(bytes(str).length <= maxLength, "String too long");
         _;
     }
 
@@ -128,13 +171,19 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         string memory projectId,
         string memory category,
         bool isPublic
-    ) external payable whenNotPaused returns (bytes32) {
-        require(bytes(projectId).length > 0, "Project ID required");
+    )
+        external
+        payable
+        whenNotPaused
+        validStringLength(projectId, MAX_STRING_LENGTH)
+        validStringLength(category, MAX_STRING_LENGTH)
+        returns (bytes32)
+    {
         require(msg.value >= registrationFee, "Insufficient fee");
 
-        // Create unique project hash
+        // Create unique project hash with nonce to prevent collisions
         bytes32 projectHash = keccak256(
-            abi.encodePacked(msg.sender, projectId, block.timestamp)
+            abi.encodePacked(msg.sender, projectId, block.timestamp, creatorNonce[msg.sender]++)
         );
 
         require(projects[projectHash].creator == address(0), "Project exists");
@@ -153,6 +202,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         totalProjects++;
 
         emit ProjectCreated(projectHash, msg.sender, projectId, block.timestamp);
+
+        // Refund excess payment
+        _refundExcess(registrationFee);
 
         return projectHash;
     }
@@ -173,26 +225,38 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         string memory stage,
         string memory ipfsHash,
         bool isEncrypted
-    ) external payable projectExists(projectHash) onlyProjectOwner(projectHash) whenNotPaused {
+    )
+        external
+        payable
+        projectExists(projectHash)
+        onlyProjectOwner(projectHash)
+        whenNotPaused
+        validStringLength(title, MAX_STRING_LENGTH)
+        validStringLength(stage, MAX_STRING_LENGTH)
+    {
         require(msg.value >= registrationFee, "Insufficient fee");
         require(contentHash != bytes32(0), "Content hash required");
         require(!registrations[contentHash].exists, "Content already registered");
 
+        // Validate IPFS hash length if provided
+        if (bytes(ipfsHash).length > 0) {
+            require(bytes(ipfsHash).length <= MAX_IPFS_HASH_LENGTH, "IPFS hash too long");
+        }
+
         Project storage project = projects[projectHash];
 
-        // Create milestone
-        Milestone memory newMilestone = Milestone({
-            contentHash: contentHash,
-            timestamp: block.timestamp,
-            title: title,
-            stage: stage,
-            ipfsHash: ipfsHash,
-            isEncrypted: isEncrypted,
-            witnesses: new address[](0)
-        });
-
-        project.milestones.push(newMilestone);
+        // Create milestone - note: we need to handle the mapping separately
+        project.milestones.push();
         uint256 milestoneIndex = project.milestones.length - 1;
+
+        Milestone storage newMilestone = project.milestones[milestoneIndex];
+        newMilestone.contentHash = contentHash;
+        newMilestone.timestamp = block.timestamp;
+        newMilestone.title = title;
+        newMilestone.stage = stage;
+        newMilestone.ipfsHash = ipfsHash;
+        newMilestone.isEncrypted = isEncrypted;
+        newMilestone.witnessCount = 0;
 
         // Register content hash for quick lookup
         registrations[contentHash] = RegistrationInfo({
@@ -212,6 +276,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
             milestoneIndex,
             block.timestamp
         );
+
+        // Refund excess payment
+        _refundExcess(registrationFee);
     }
 
     /**
@@ -228,24 +295,34 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         Project storage project = projects[projectHash];
         require(milestoneIndex < project.milestones.length, "Invalid milestone");
 
-        // Check if already witnessed
-        address[] storage witnesses = project.milestones[milestoneIndex].witnesses;
-        for (uint256 i = 0; i < witnesses.length; i++) {
-            require(witnesses[i] != msg.sender, "Already witnessed");
-        }
+        Milestone storage milestone = project.milestones[milestoneIndex];
 
-        witnesses.push(msg.sender);
+        // Check witness limit
+        require(milestone.witnessCount < MAX_WITNESSES_PER_MILESTONE, "Max witnesses reached");
+
+        // O(1) duplicate check using mapping
+        require(!milestone.hasWitnessed[msg.sender], "Already witnessed");
+
+        // Add witness
+        milestone.hasWitnessed[msg.sender] = true;
+        milestone.witnesses.push(msg.sender);
+        milestone.witnessCount++;
 
         emit WitnessAdded(projectHash, milestoneIndex, msg.sender, block.timestamp);
+
+        // Refund excess payment
+        _refundExcess(witnessFee);
     }
 
     /**
-     * @dev Authorize a witness for all future milestones
+     * @dev Authorize a witness for future verification
      * @param witness Address to authorize
      */
     function authorizeWitness(address witness) external {
         require(witness != address(0), "Invalid witness address");
+        require(witness != msg.sender, "Cannot authorize self");
         authorizedWitnesses[msg.sender][witness] = true;
+        emit WitnessAuthorized(msg.sender, witness, block.timestamp);
     }
 
     /**
@@ -253,7 +330,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
      * @param witness Address to revoke
      */
     function revokeWitness(address witness) external {
+        require(witness != address(0), "Invalid witness address");
         authorizedWitnesses[msg.sender][witness] = false;
+        emit WitnessRevoked(msg.sender, witness, block.timestamp);
     }
 
     /**
@@ -287,16 +366,46 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @dev Get all projects for a creator
+     * @dev Get paginated projects for a creator (FIXED: prevents unbounded array issue)
      * @param creator Address of creator
-     * @return Array of project hashes
+     * @param offset Starting index
+     * @param limit Maximum number of results
+     * @return projectHashes Array of project hashes
+     * @return total Total number of projects for this creator
      */
-    function getCreatorProjects(address creator)
+    function getCreatorProjects(address creator, uint256 offset, uint256 limit)
         external
         view
-        returns (bytes32[] memory)
+        returns (bytes32[] memory projectHashes, uint256 total)
     {
-        return creatorProjects[creator];
+        total = creatorProjects[creator].length;
+
+        if (offset >= total) {
+            return (new bytes32[](0), total);
+        }
+
+        uint256 end = offset + limit > total ? total : offset + limit;
+        uint256 size = end - offset;
+        projectHashes = new bytes32[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            projectHashes[i] = creatorProjects[creator][offset + i];
+        }
+
+        return (projectHashes, total);
+    }
+
+    /**
+     * @dev Get total number of projects for a creator
+     * @param creator Address of creator
+     * @return Number of projects
+     */
+    function getCreatorProjectCount(address creator)
+        external
+        view
+        returns (uint256)
+    {
+        return creatorProjects[creator].length;
     }
 
     /**
@@ -341,7 +450,7 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
             string memory stage,
             string memory ipfsHash,
             bool isEncrypted,
-            address[] memory witnesses
+            uint256 witnessCount
         )
     {
         Project storage project = projects[projectHash];
@@ -355,8 +464,62 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
             milestone.stage,
             milestone.ipfsHash,
             milestone.isEncrypted,
-            milestone.witnesses
+            milestone.witnessCount
         );
+    }
+
+    /**
+     * @dev Get witnesses for a milestone (paginated to prevent gas issues)
+     * @param projectHash Hash of the project
+     * @param milestoneIndex Index of milestone
+     * @param offset Starting index
+     * @param limit Maximum number of results
+     */
+    function getMilestoneWitnesses(
+        bytes32 projectHash,
+        uint256 milestoneIndex,
+        uint256 offset,
+        uint256 limit
+    )
+        external
+        view
+        returns (address[] memory witnesses, uint256 total)
+    {
+        Project storage project = projects[projectHash];
+        require(milestoneIndex < project.milestones.length, "Invalid milestone");
+
+        Milestone storage milestone = project.milestones[milestoneIndex];
+        total = milestone.witnesses.length;
+
+        if (offset >= total) {
+            return (new address[](0), total);
+        }
+
+        uint256 end = offset + limit > total ? total : offset + limit;
+        uint256 size = end - offset;
+        witnesses = new address[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            witnesses[i] = milestone.witnesses[offset + i];
+        }
+
+        return (witnesses, total);
+    }
+
+    /**
+     * @dev Check if an address has witnessed a milestone
+     * @param projectHash Hash of the project
+     * @param milestoneIndex Index of milestone
+     * @param witness Address to check
+     */
+    function hasWitnessed(
+        bytes32 projectHash,
+        uint256 milestoneIndex,
+        address witness
+    ) external view returns (bool) {
+        Project storage project = projects[projectHash];
+        require(milestoneIndex < project.milestones.length, "Invalid milestone");
+        return project.milestones[milestoneIndex].hasWitnessed[witness];
     }
 
     /**
@@ -370,22 +533,39 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         return projects[projectHash].milestones.length;
     }
 
+    // ============ INTERNAL FUNCTIONS ============
+
+    /**
+     * @dev Refund excess ETH sent by user
+     * @param requiredFee The required fee amount
+     */
+    function _refundExcess(uint256 requiredFee) internal {
+        if (msg.value > requiredFee) {
+            uint256 excess = msg.value - requiredFee;
+            (bool success, ) = payable(msg.sender).call{value: excess}("");
+            require(success, "Refund failed");
+            emit ExcessRefunded(msg.sender, excess);
+        }
+    }
+
     // ============ ADMIN FUNCTIONS ============
 
     /**
-     * @dev Update registration fee
+     * @dev Update registration fee (with maximum cap)
      * @param newFee New fee in wei
      */
     function setRegistrationFee(uint256 newFee) external onlyOwner {
+        require(newFee <= MAX_REGISTRATION_FEE, "Fee exceeds maximum");
         registrationFee = newFee;
         emit FeeUpdated(newFee, "registration");
     }
 
     /**
-     * @dev Update witness fee
+     * @dev Update witness fee (with maximum cap)
      * @param newFee New fee in wei
      */
     function setWitnessFee(uint256 newFee) external onlyOwner {
+        require(newFee <= MAX_WITNESS_FEE, "Fee exceeds maximum");
         witnessFee = newFee;
         emit FeeUpdated(newFee, "witness");
     }
