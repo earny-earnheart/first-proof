@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Hardhat
+artifacts/
+cache/
+typechain-types/
+
+# Coverage
+coverage/
+coverage.json
+.coverage_cache/
+.coverage_contracts/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# TypeScript
+dist/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Gas reports
+gas-report.txt
+
+# Deployment artifacts
+deployments/
+.openzeppelin/
+
+# Misc
+*.tgz
+.cache/
+temp/
+tmp/
