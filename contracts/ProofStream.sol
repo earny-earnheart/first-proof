@@ -53,9 +53,16 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
     // Mapping: creator => witness => isAuthorized
     mapping(address => mapping(address => bool)) public authorizedWitnesses;
 
+    // Mapping: projectHash => milestoneIndex => witness => hasWitnessed (for O(1) duplicate check)
+    mapping(bytes32 => mapping(uint256 => mapping(address => bool))) private hasWitnessed;
+
     // Fee configuration
     uint256 public registrationFee = 0.001 ether; // ~$2 at $2000 ETH
     uint256 public witnessFee = 0.0005 ether;
+
+    // Constants
+    uint256 public constant MAX_WITNESSES = 100; // Prevent DoS from unbounded array
+    uint256 public constant MAX_STRING_LENGTH = 256; // Prevent storage bloat
 
     // Statistics
     uint256 public totalProjects;
@@ -91,6 +98,21 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
     );
 
     event FeeUpdated(uint256 newFee, string feeType);
+
+    event WitnessAuthorized(
+        address indexed creator,
+        address indexed witness
+    );
+
+    event WitnessRevoked(
+        address indexed creator,
+        address indexed witness
+    );
+
+    event FundsWithdrawn(
+        address indexed owner,
+        uint256 amount
+    );
 
     // ============ MODIFIERS ============
 
@@ -129,8 +151,18 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         string memory category,
         bool isPublic
     ) external payable whenNotPaused returns (bytes32) {
+        // Input validation
         require(bytes(projectId).length > 0, "Project ID required");
+        require(bytes(projectId).length <= MAX_STRING_LENGTH, "Project ID too long");
+        require(bytes(category).length > 0, "Category required");
+        require(bytes(category).length <= MAX_STRING_LENGTH, "Category too long");
         require(msg.value >= registrationFee, "Insufficient fee");
+
+        // Refund overpayment
+        if (msg.value > registrationFee) {
+            (bool refundSuccess, ) = payable(msg.sender).call{value: msg.value - registrationFee}("");
+            require(refundSuccess, "Refund failed");
+        }
 
         // Create unique project hash
         bytes32 projectHash = keccak256(
@@ -174,9 +206,21 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
         string memory ipfsHash,
         bool isEncrypted
     ) external payable projectExists(projectHash) onlyProjectOwner(projectHash) whenNotPaused {
+        // Input validation
         require(msg.value >= registrationFee, "Insufficient fee");
         require(contentHash != bytes32(0), "Content hash required");
         require(!registrations[contentHash].exists, "Content already registered");
+        require(bytes(title).length > 0, "Title required");
+        require(bytes(title).length <= MAX_STRING_LENGTH, "Title too long");
+        require(bytes(stage).length > 0, "Stage required");
+        require(bytes(stage).length <= MAX_STRING_LENGTH, "Stage too long");
+        require(bytes(ipfsHash).length <= MAX_STRING_LENGTH, "IPFS hash too long");
+
+        // Refund overpayment
+        if (msg.value > registrationFee) {
+            (bool refundSuccess, ) = payable(msg.sender).call{value: msg.value - registrationFee}("");
+            require(refundSuccess, "Refund failed");
+        }
 
         Project storage project = projects[projectHash];
 
@@ -225,16 +269,33 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
     ) external payable projectExists(projectHash) whenNotPaused {
         require(msg.value >= witnessFee, "Insufficient witness fee");
 
+        // Refund overpayment
+        if (msg.value > witnessFee) {
+            (bool refundSuccess, ) = payable(msg.sender).call{value: msg.value - witnessFee}("");
+            require(refundSuccess, "Refund failed");
+        }
+
         Project storage project = projects[projectHash];
         require(milestoneIndex < project.milestones.length, "Invalid milestone");
 
-        // Check if already witnessed
-        address[] storage witnesses = project.milestones[milestoneIndex].witnesses;
-        for (uint256 i = 0; i < witnesses.length; i++) {
-            require(witnesses[i] != msg.sender, "Already witnessed");
+        // Check authorization for private projects
+        if (!project.isPublic) {
+            require(
+                authorizedWitnesses[project.creator][msg.sender],
+                "Not authorized to witness private project"
+            );
         }
 
+        // O(1) duplicate check using mapping
+        require(!hasWitnessed[projectHash][milestoneIndex][msg.sender], "Already witnessed");
+
+        // Check witness limit to prevent DoS
+        address[] storage witnesses = project.milestones[milestoneIndex].witnesses;
+        require(witnesses.length < MAX_WITNESSES, "Maximum witnesses reached");
+
+        // Add witness
         witnesses.push(msg.sender);
+        hasWitnessed[projectHash][milestoneIndex][msg.sender] = true;
 
         emit WitnessAdded(projectHash, milestoneIndex, msg.sender, block.timestamp);
     }
@@ -245,7 +306,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
      */
     function authorizeWitness(address witness) external {
         require(witness != address(0), "Invalid witness address");
+        require(witness != msg.sender, "Cannot authorize self");
         authorizedWitnesses[msg.sender][witness] = true;
+        emit WitnessAuthorized(msg.sender, witness);
     }
 
     /**
@@ -253,7 +316,9 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
      * @param witness Address to revoke
      */
     function revokeWitness(address witness) external {
+        require(witness != address(0), "Invalid witness address");
         authorizedWitnesses[msg.sender][witness] = false;
+        emit WitnessRevoked(msg.sender, witness);
     }
 
     /**
@@ -413,6 +478,8 @@ contract ProofStream is Ownable, ReentrancyGuard, Pausable {
 
         (bool success, ) = payable(owner()).call{value: balance}("");
         require(success, "Withdrawal failed");
+
+        emit FundsWithdrawn(owner(), balance);
     }
 
     /**
