@@ -1,0 +1,36 @@
+{
+  "name": "first-proof",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:localhost": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "mint:sepolia": "hardhat run scripts/mint.js --network sepolia",
+    "mint:mainnet": "hardhat run scripts/mint.js --network mainnet",
+    "interact:sepolia": "hardhat run scripts/interact.js --network sepolia",
+    "interact:mainnet": "hardhat run scripts/interact.js --network mainnet",
+    "console:sepolia": "hardhat console --network sepolia",
+    "console:mainnet": "hardhat console --network mainnet",
+    "node": "hardhat node",
+    "clean": "hardhat clean"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:57798/git/earny-earnheart/first-proof"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "hardhat": "^3.1.5"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "dotenv": "^17.2.3"
+  }
+}
