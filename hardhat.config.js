@@ -1,10 +1,16 @@
-require("@nomicfoundation/hardhat-toolbox");
+require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-verify");
 require("dotenv").config();
+
+// Hardhat validates accounts at config load, so a placeholder key would break
+// even commands that never sign (compile, clean).
+const rawKey = (process.env.PRIVATE_KEY || "").trim().replace(/^0x/, "");
+const accounts = /^[0-9a-fA-F]{64}$/.test(rawKey) ? [`0x${rawKey}`] : [];
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.20",
+    version: "0.8.28",
     settings: {
       optimizer: {
         enabled: true,
@@ -13,25 +19,16 @@ module.exports = {
     }
   },
   networks: {
-    // Ethereum Mainnet
     mainnet: {
-      url: process.env.ETHEREUM_MAINNET_RPC_URL || "https://eth-mainnet.g.alchemy.com/v2/YOUR-API-KEY",
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      url: process.env.ETHEREUM_MAINNET_RPC_URL || "",
+      accounts,
       chainId: 1
     },
-    // Sepolia Testnet (recommended for testing)
     sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/YOUR-API-KEY",
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      url: process.env.SEPOLIA_RPC_URL || "",
+      accounts,
       chainId: 11155111
     },
-    // Goerli Testnet (deprecated but still available)
-    goerli: {
-      url: process.env.GOERLI_RPC_URL || "https://eth-goerli.g.alchemy.com/v2/YOUR-API-KEY",
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-      chainId: 5
-    },
-    // Localhost for development
     localhost: {
       url: "http://127.0.0.1:8545",
       chainId: 31337
