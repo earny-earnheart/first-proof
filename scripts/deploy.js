@@ -12,18 +12,16 @@ async function main() {
 
   const NFT_NAME = "First Proof NFT";
   const NFT_SYMBOL = "FPNFT";
-  const BASE_TOKEN_URI = "ipfs://";
   const MAX_SUPPLY = 10000;
 
   console.log("\nNFT Configuration:");
   console.log("- Name:", NFT_NAME);
   console.log("- Symbol:", NFT_SYMBOL);
-  console.log("- Base URI:", BASE_TOKEN_URI);
   console.log("- Max Supply:", MAX_SUPPLY);
 
   console.log("\nDeploying FirstProofNFT contract...");
   const FirstProofNFT = await hre.ethers.getContractFactory("FirstProofNFT");
-  const nft = await FirstProofNFT.deploy(NFT_NAME, NFT_SYMBOL, BASE_TOKEN_URI, MAX_SUPPLY);
+  const nft = await FirstProofNFT.deploy(NFT_NAME, NFT_SYMBOL, MAX_SUPPLY);
 
   await nft.waitForDeployment();
   const contractAddress = await nft.getAddress();
@@ -42,7 +40,7 @@ async function main() {
       try {
         await hre.run("verify:verify", {
           address: contractAddress,
-          constructorArguments: [NFT_NAME, NFT_SYMBOL, BASE_TOKEN_URI, MAX_SUPPLY],
+          constructorArguments: [NFT_NAME, NFT_SYMBOL, MAX_SUPPLY],
         });
         console.log("✅ Contract verified on Etherscan!");
       } catch (error) {

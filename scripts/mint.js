@@ -3,6 +3,7 @@ const hre = require("hardhat");
 async function main() {
   const CONTRACT_ADDRESS = process.env.NFT_CONTRACT_ADDRESS;
   const RECIPIENT_ADDRESS = process.env.RECIPIENT_ADDRESS;
+  // Supply the complete metadata URI; the contract adds no prefix.
   const TOKEN_URI = process.env.TOKEN_URI || "ipfs://QmYourTokenMetadataHash";
 
   console.log("Network:", hre.network.name);

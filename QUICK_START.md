@@ -52,6 +52,7 @@ npm run deploy:sepolia
 # Add contract address to .env
 echo "NFT_CONTRACT_ADDRESS=0xYourContractAddress" >> .env
 echo "RECIPIENT_ADDRESS=0xYourWalletAddress" >> .env
+# Use a complete metadata URI (including ipfs://), never a bare CID.
 echo "TOKEN_URI=ipfs://QmExample" >> .env
 
 # Mint NFT

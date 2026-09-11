@@ -12,24 +12,20 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract FirstProofNFT is ERC721, ERC721URIStorage, Ownable {
     uint256 private _nextTokenId;
 
-    string private _baseTokenURI;
-
     /// @dev Zero means unlimited supply.
     uint256 public maxSupply;
 
     event NFTMinted(address indexed to, uint256 indexed tokenId, string tokenURI);
-    event BaseURIUpdated(string newBaseURI);
 
     constructor(
         string memory name,
         string memory symbol,
-        string memory baseTokenURI,
         uint256 _maxSupply
     ) ERC721(name, symbol) Ownable(msg.sender) {
-        _baseTokenURI = baseTokenURI;
         maxSupply = _maxSupply;
     }
 
+    /// @dev uri must be a fully qualified metadata URI, e.g. ipfs://<CID>.
     function mintNFT(address to, string memory uri) public onlyOwner returns (uint256) {
         uint256 tokenId = _nextTokenId;
 
@@ -51,19 +47,11 @@ contract FirstProofNFT is ERC721, ERC721URIStorage, Ownable {
         }
     }
 
-    function setBaseURI(string memory newBaseURI) public onlyOwner {
-        _baseTokenURI = newBaseURI;
-        emit BaseURIUpdated(newBaseURI);
-    }
-
     function totalSupply() public view returns (uint256) {
         return _nextTokenId;
     }
 
-    function _baseURI() internal view virtual override returns (string memory) {
-        return _baseTokenURI;
-    }
-
+    // Keep the inherited base URI empty so per-token URIs are returned unchanged.
     function tokenURI(uint256 tokenId)
         public
         view

@@ -10,8 +10,14 @@ A complete NFT (Non-Fungible Token) smart contract built with Solidity and ready
 - **Batch Minting**: Mint multiple NFTs in a single transaction
 - **Supply Cap**: Optional maximum supply limit
 - **Gas Optimized**: Efficient contract design to minimize gas costs
-- **Upgradeable Base URI**: Update metadata base URI without redeployment
+- **Complete Metadata URIs**: Store fully qualified URIs unchanged, without a base prefix
 - **Etherscan Verification**: Automated contract verification
+
+### Metadata URI convention
+
+Pass a fully qualified metadata URI to `mintNFT` and every entry in `batchMint`, such as `ipfs://<CID>` or `https://example.com/metadata/0.json`. Do not pass a bare CID. The contract uses an empty inherited base URI and returns the stored URI unchanged; there is no base URI constructor argument or setter. Deployment and verification take only name, symbol, and maximum supply.
+
+Run `npm test` to check single and batch token URI round trips and nonexistent-token behavior.
 
 ## Smart Contract Overview
 
@@ -23,7 +29,6 @@ A complete NFT (Non-Fungible Token) smart contract built with Solidity and ready
 
 - `mintNFT(address to, string memory tokenURI)`: Mint a single NFT
 - `batchMint(address to, string[] memory tokenURIs)`: Mint multiple NFTs
-- `setBaseURI(string memory newBaseURI)`: Update the base URI
 - `totalSupply()`: Get the current number of minted tokens
 - `tokenURI(uint256 tokenId)`: Get the metadata URI for a token
 
@@ -234,10 +239,10 @@ echo "NFT_CONTRACT_ADDRESS=0xYourContractAddress" >> .env
 
 ```bash
 # For Sepolia
-npx hardhat verify --network sepolia YOUR_CONTRACT_ADDRESS "First Proof NFT" "FPNFT" "ipfs://" 10000
+npx hardhat verify --network sepolia YOUR_CONTRACT_ADDRESS "First Proof NFT" "FPNFT" 10000
 
 # For Mainnet
-npx hardhat verify --network mainnet YOUR_CONTRACT_ADDRESS "First Proof NFT" "FPNFT" "ipfs://" 10000
+npx hardhat verify --network mainnet YOUR_CONTRACT_ADDRESS "First Proof NFT" "FPNFT" 10000
 ```
 
 ### 3. View Your Contract
@@ -438,7 +443,7 @@ npx hardhat run scripts/mint.js --network sepolia
 npx hardhat run scripts/interact.js --network sepolia
 
 # Verify contract
-npx hardhat verify --network sepolia CONTRACT_ADDRESS "Name" "Symbol" "BaseURI" MaxSupply
+npx hardhat verify --network sepolia CONTRACT_ADDRESS "Name" "Symbol" MaxSupply
 
 # Open Hardhat console
 npx hardhat console --network sepolia
@@ -505,7 +510,7 @@ first-proof/
 │   ├── deploy.js              # Deployment script
 │   ├── mint.js                # Minting script
 │   └── interact.js            # Contract interaction script
-├── test/                      # Test files (add your own)
+├── test/                      # tokenURI regression tests
 ├── hardhat.config.js          # Hardhat configuration
 ├── .env.example               # Environment variables template
 ├── .gitignore                 # Git ignore file

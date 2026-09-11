@@ -12,6 +12,8 @@ module.exports = {
   solidity: {
     version: "0.8.28",
     settings: {
+      // OpenZeppelin 5.6 uses MCOPY; Ethereum mainnet and Sepolia support Cancun.
+      evmVersion: "cancun",
       optimizer: {
         enabled: true,
         runs: 200
